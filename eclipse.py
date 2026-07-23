@@ -2,7 +2,7 @@ import streamlit as st
 from google import genai
 
 # Replace with your Gemini API key
-API_KEY = "AQ.Ab8RN6IlrNn6IwP7mHbuxm77dAtCSnLON8ggWY5D-mcCXnFnUQ"
+API_KEY = "AQ.Ab8RN6KeLTylG3uT-4j1-iTdXFBc_zdWxtu7kWWoGfGGEfyYmw"
 
 client = genai.Client(api_key=API_KEY)
 
@@ -38,7 +38,7 @@ if prompt:
 
     try:
         response = client.models.generate_content(
-            model="gemini-3.5-flash",
+            model="gemini-flash-latest",
             contents=prompt,
         )
 
