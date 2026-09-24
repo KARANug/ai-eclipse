@@ -7,6 +7,24 @@ API_KEY = st.secrets["GEMINI_API_KEY"]
 # Create Gemini client
 client = genai.Client(api_key=API_KEY)
 
+import mysql.connector
+
+try:
+    db = mysql.connector.connect(
+        host=st.secrets["TIDB_HOST"],
+        port=st.secrets["TIDB_PORT"],
+        user=st.secrets["TIDB_USER"],
+        password=st.secrets["TIDB_PASSWORD"],
+        database=st.secrets["TIDB_DATABASE"],
+        ssl_ca=st.secrets["TIDB_CA"]
+    )
+
+    st.success("✅ Database connected successfully!")
+
+except Exception as e:
+    st.error("❌ Database connection failed")
+    st.code(str(e))
+    
 # Page settings
 st.set_page_config(
     page_title="Eclipse AI",
