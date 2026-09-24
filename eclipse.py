@@ -24,7 +24,17 @@ try:
 except Exception as e:
     st.error("❌ Database connection failed")
     st.code(str(e))
-    
+
+# Test database
+cursor = db.cursor()
+
+cursor.execute("SELECT COUNT(*) FROM users")
+user_count = cursor.fetchone()[0]
+
+st.write("👤 Users currently registered:", user_count)
+
+cursor.close()
+
 # Page settings
 st.set_page_config(
     page_title="Eclipse AI",
