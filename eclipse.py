@@ -1,17 +1,33 @@
 import streamlit as st
-from google import genai
 import mysql.connector
 import bcrypt
+from google import genai
 
 
 # =========================================================
-# PAGE SETTINGS
+# PAGE CONFIG
 # =========================================================
 
 st.set_page_config(
     page_title="Eclipse AI",
-    page_icon="🤖"
+    page_icon="🤖",
+    layout="wide"
 )
+
+
+# =========================================================
+# DATABASE CONNECTION
+# =========================================================
+
+def get_db_connection():
+    return mysql.connector.connect(
+        host=st.secrets["TIDB_HOST"],
+        port=st.secrets["TIDB_PORT"],
+        user=st.secrets["TIDB_USER"],
+        password=st.secrets["TIDB_PASSWORD"],
+        database=st.secrets["TIDB_DATABASE"],
+        ssl_ca=st.secrets["TIDB_CA"]
+    )
 
 
 # =========================================================
@@ -24,96 +40,31 @@ client = genai.Client(api_key=API_KEY)
 
 
 # =========================================================
-# DATABASE CONNECTION
-# =========================================================
-
-def get_db_connection():
-
-    return mysql.connector.connect(
-        host=st.secrets["TIDB_HOST"],
-        port=st.secrets["TIDB_PORT"],
-        user=st.secrets["TIDB_USER"],
-        password=st.secrets["TIDB_PASSWORD"],
-        database=st.secrets["TIDB_DATABASE"],
-        ssl_ca=st.secrets["TIDB_CA"]
-    )
-
-
-# =========================================================
 # SESSION STATE
 # =========================================================
 
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
+if "admin_logged_in" not in st.session_state:
+    st.session_state.admin_logged_in = False
 
-if "user_id" not in st.session_state:
-    st.session_state.user_id = None
-
-if "username" not in st.session_state:
-    st.session_state.username = None
+if "admin_username" not in st.session_state:
+    st.session_state.admin_username = None
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
 
 # =========================================================
-# REGISTRATION
+# ADMIN LOGIN
 # =========================================================
 
-def register_user(username, email, password):
+def admin_login(username, password):
 
     db = get_db_connection()
-    cursor = db.cursor()
-
-    # Check whether username/email already exists
-    cursor.execute(
-        "SELECT id FROM users WHERE username = %s OR email = %s",
-        (username, email)
-    )
-
-    existing_user = cursor.fetchone()
-
-    if existing_user:
-        cursor.close()
-        db.close()
-        return False, "Username or email already exists."
-
-    # Hash password
-    password_hash = bcrypt.hashpw(
-        password.encode("utf-8"),
-        bcrypt.gensalt()
-    ).decode("utf-8")
-
-    # Insert user
-    cursor.execute(
-        """
-        INSERT INTO users
-        (username, email, password_hash)
-        VALUES (%s, %s, %s)
-        """,
-        (username, email, password_hash)
-    )
-
-    db.commit()
-
-    cursor.close()
-    db.close()
-
-    return True, "Registration successful!"
-
-
-# =========================================================
-# LOGIN
-# =========================================================
-
-def login_user(username, password):
-
-    db = get_db_connection()
-    cursor = db.cursor()
+    cursor = db.cursor(dictionary=True)
 
     cursor.execute(
         """
-        SELECT id, username, password_hash
+        SELECT id, username, password_hash, role, status
         FROM users
         WHERE username = %s
         """,
@@ -126,324 +77,538 @@ def login_user(username, password):
     db.close()
 
     if not user:
-        return False, None, None
+        return False, "Username not found."
 
-    user_id = user[0]
-    stored_username = user[1]
-    stored_password_hash = user[2]
+    if user["role"] != "admin":
+        return False, "This account is not an admin account."
 
-    # Check password
-    if bcrypt.checkpw(
+    if user["status"] != "active":
+        return False, "This admin account is disabled."
+
+    password_correct = bcrypt.checkpw(
         password.encode("utf-8"),
-        stored_password_hash.encode("utf-8")
-    ):
-
-        return True, user_id, stored_username
-
-    return False, None, None
-
-
-# =========================================================
-# LOGIN / REGISTER PAGE
-# =========================================================
-
-if not st.session_state.logged_in:
-
-    st.title("🤖 Eclipse AI")
-
-    login_tab, register_tab = st.tabs(
-        ["🔐 Login", "📝 Register"]
+        user["password_hash"].encode("utf-8")
     )
 
+    if password_correct:
+        return True, "Login successful."
 
-    # -----------------------------------------------------
-    # LOGIN
-    # -----------------------------------------------------
-
-    with login_tab:
-
-        st.subheader("Login")
-
-        login_username = st.text_input(
-            "Username",
-            key="login_username"
-        )
-
-        login_password = st.text_input(
-            "Password",
-            type="password",
-            key="login_password"
-        )
-
-        if st.button("Login", type="primary"):
-
-            if not login_username or not login_password:
-
-                st.warning("Please enter username and password.")
-
-            else:
-
-                success, user_id, username = login_user(
-                    login_username,
-                    login_password
-                )
-
-                if success:
-
-                    st.session_state.logged_in = True
-                    st.session_state.user_id = user_id
-                    st.session_state.username = username
-
-                    st.session_state.messages = []
-
-                    st.success("Login successful!")
-
-                    st.rerun()
-
-                else:
-
-                    st.error(
-                        "❌ Invalid username or password."
-                    )
-
-
-    # -----------------------------------------------------
-    # REGISTER
-    # -----------------------------------------------------
-
-    with register_tab:
-
-        st.subheader("Create Account")
-
-        register_username = st.text_input(
-            "Username",
-            key="register_username"
-        )
-
-        register_email = st.text_input(
-            "Email",
-            key="register_email"
-        )
-
-        register_password = st.text_input(
-            "Password",
-            type="password",
-            key="register_password"
-        )
-
-        confirm_password = st.text_input(
-            "Confirm Password",
-            type="password",
-            key="confirm_password"
-        )
-
-        if st.button("Create Account"):
-
-            if not register_username or not register_email:
-
-                st.warning(
-                    "Please enter username and email."
-                )
-
-            elif not register_password:
-
-                st.warning(
-                    "Please enter a password."
-                )
-
-            elif register_password != confirm_password:
-
-                st.error(
-                    "❌ Passwords do not match."
-                )
-
-            else:
-
-                success, message = register_user(
-                    register_username,
-                    register_email,
-                    register_password
-                )
-
-                if success:
-
-                    st.success(message)
-
-                    st.info(
-                        "You can now go to the Login tab."
-                    )
-
-                else:
-
-                    st.error(message)
-
-
-    st.stop()
+    return False, "Incorrect password."
 
 
 # =========================================================
-# LOGGED-IN CHATBOT
+# ADMIN DASHBOARD
 # =========================================================
 
-st.title("🤖 Eclipse AI")
+def show_admin_dashboard():
 
-st.write(
-    f"Welcome, **{st.session_state.username}**! 👋"
-)
+    st.title("🛠️ Eclipse AI - Admin Dashboard")
 
-
-# Logout button
-
-if st.button("🚪 Logout"):
-
-    st.session_state.logged_in = False
-    st.session_state.user_id = None
-    st.session_state.username = None
-    st.session_state.messages = []
-
-    st.rerun()
-
-
-st.divider()
-
-
-# =========================================================
-# DISPLAY PREVIOUS CHAT MESSAGES
-# =========================================================
-
-for message in st.session_state.messages:
-
-    with st.chat_message(message["role"]):
-
-        st.markdown(message["content"])
-
-
-# =========================================================
-# USER INPUT
-# =========================================================
-
-prompt = st.chat_input(
-    "Ask me anything..."
-)
-
-
-if prompt:
-
-    # -----------------------------------------------------
-    # DISPLAY USER MESSAGE
-    # -----------------------------------------------------
-
-    st.session_state.messages.append(
-        {
-            "role": "user",
-            "content": prompt
-        }
+    st.write(
+        f"Welcome, **{st.session_state.admin_username}** 👋"
     )
 
-    with st.chat_message("user"):
-
-        st.markdown(prompt)
-
+    st.divider()
 
     # -----------------------------------------------------
-    # SEND MESSAGE TO GEMINI
+    # LOGOUT
     # -----------------------------------------------------
 
-    try:
+    if st.button("🚪 Logout"):
 
-        response = client.models.generate_content(
-            model="gemini-3.5-flash",
-            contents=prompt
-        )
+        st.session_state.admin_logged_in = False
+        st.session_state.admin_username = None
 
-        answer = response.text
+        st.rerun()
 
-
-    except Exception as e:
-
-        error_text = str(e)
-
-
-        if "503" in error_text or "UNAVAILABLE" in error_text:
-
-            answer = (
-                "⚠️ Gemini is temporarily busy right now. "
-                "Please try again in a few seconds."
-            )
-
-
-        elif "401" in error_text or "UNAUTHENTICATED" in error_text:
-
-            answer = (
-                "🔐 Gemini authentication failed. "
-                "Please check the API key in Streamlit Secrets."
-            )
-
-
-        elif "429" in error_text or "RESOURCE_EXHAUSTED" in error_text:
-
-            answer = (
-                "⏳ Gemini API limit reached. "
-                "Please try again later."
-            )
-
-
-        else:
-
-            answer = f"❌ Error: {error_text}"
-
+    st.divider()
 
     # -----------------------------------------------------
-    # SAVE ASSISTANT RESPONSE
+    # GET USER STATISTICS
     # -----------------------------------------------------
 
-    st.session_state.messages.append(
-        {
-            "role": "assistant",
-            "content": answer
-        }
+    db = get_db_connection()
+    cursor = db.cursor(dictionary=True)
+
+    cursor.execute("SELECT COUNT(*) AS total FROM users")
+    total_users = cursor.fetchone()["total"]
+
+    cursor.execute(
+        "SELECT COUNT(*) AS total FROM users WHERE status = 'active'"
+    )
+    active_users = cursor.fetchone()["total"]
+
+    cursor.execute(
+        "SELECT COUNT(*) AS total FROM users WHERE status = 'disabled'"
+    )
+    disabled_users = cursor.fetchone()["total"]
+
+    cursor.execute(
+        "SELECT COUNT(*) AS total FROM chat_history"
+    )
+    total_chats = cursor.fetchone()["total"]
+
+    cursor.close()
+    db.close()
+
+    # -----------------------------------------------------
+    # STATISTICS
+    # -----------------------------------------------------
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric("👥 Total Users", total_users)
+
+    with col2:
+        st.metric("🟢 Active Users", active_users)
+
+    with col3:
+        st.metric("🔴 Disabled Users", disabled_users)
+
+    with col4:
+        st.metric("💬 Total Chats", total_chats)
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # USER MANAGEMENT
+    # -----------------------------------------------------
+
+    st.subheader("👥 User Management")
+
+    db = get_db_connection()
+    cursor = db.cursor(dictionary=True)
+
+    cursor.execute(
+        """
+        SELECT id, username, email, role, status, created_at
+        FROM users
+        ORDER BY id DESC
+        """
     )
 
+    users = cursor.fetchall()
+
+    cursor.close()
+    db.close()
+
+    if users:
+
+        st.dataframe(
+            users,
+            use_container_width=True,
+            hide_index=True
+        )
+
+    else:
+        st.info("No users found.")
+
+    st.divider()
 
     # -----------------------------------------------------
-    # DISPLAY ASSISTANT RESPONSE
+    # SEARCH USER
     # -----------------------------------------------------
 
-    with st.chat_message("assistant"):
+    st.subheader("🔎 Search User")
 
-        st.markdown(answer)
+    search_username = st.text_input(
+        "Enter username"
+    )
 
-
-    # =====================================================
-    # SAVE CHAT TO DATABASE
-    # =====================================================
-
-    try:
+    if search_username:
 
         db = get_db_connection()
-        cursor = db.cursor()
+        cursor = db.cursor(dictionary=True)
 
         cursor.execute(
             """
-            INSERT INTO chat_history
-            (user_id, user_message, bot_response)
-            VALUES (%s, %s, %s)
+            SELECT id, username, email, role, status, created_at
+            FROM users
+            WHERE username LIKE %s
             """,
-            (
-                st.session_state.user_id,
-                prompt,
-                answer
-            )
+            (f"%{search_username}%",)
         )
 
-        db.commit()
+        search_results = cursor.fetchall()
 
         cursor.close()
         db.close()
 
+        if search_results:
 
-    except Exception as e:
+            st.dataframe(
+                search_results,
+                use_container_width=True,
+                hide_index=True
+            )
 
-        st.warning(
-            f"⚠️ Chat could not be saved to database: {e}"
+        else:
+            st.warning("No matching user found.")
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # ENABLE / DISABLE USER
+    # -----------------------------------------------------
+
+    st.subheader("🟢🔴 Change User Status")
+
+    username_status = st.text_input(
+        "Username",
+        key="status_username"
+    )
+
+    new_status = st.selectbox(
+        "Select status",
+        ["active", "disabled"]
+    )
+
+    if st.button("Update Status"):
+
+        if username_status:
+
+            db = get_db_connection()
+            cursor = db.cursor()
+
+            cursor.execute(
+                """
+                UPDATE users
+                SET status = %s
+                WHERE username = %s
+                AND role != 'admin'
+                """,
+                (new_status, username_status)
+            )
+
+            db.commit()
+
+            affected_rows = cursor.rowcount
+
+            cursor.close()
+            db.close()
+
+            if affected_rows > 0:
+
+                st.success(
+                    f"User '{username_status}' status changed to '{new_status}'."
+                )
+
+                st.rerun()
+
+            else:
+
+                st.warning(
+                    "User not found, or admin accounts cannot be changed here."
+                )
+
+        else:
+            st.warning("Please enter a username.")
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # DELETE USER
+    # -----------------------------------------------------
+
+    st.subheader("🗑️ Delete User")
+
+    delete_username = st.text_input(
+        "Username to delete",
+        key="delete_username"
+    )
+
+    if st.button("Delete User"):
+
+        if delete_username:
+
+            db = get_db_connection()
+            cursor = db.cursor()
+
+            # Delete user's chat history first
+            cursor.execute(
+                """
+                DELETE FROM chat_history
+                WHERE user_id = (
+                    SELECT id
+                    FROM users
+                    WHERE username = %s
+                    AND role != 'admin'
+                )
+                """,
+                (delete_username,)
+            )
+
+            # Delete user
+            cursor.execute(
+                """
+                DELETE FROM users
+                WHERE username = %s
+                AND role != 'admin'
+                """,
+                (delete_username,)
+            )
+
+            db.commit()
+
+            affected_rows = cursor.rowcount
+
+            cursor.close()
+            db.close()
+
+            if affected_rows > 0:
+
+                st.success(
+                    f"User '{delete_username}' deleted successfully."
+                )
+
+                st.rerun()
+
+            else:
+
+                st.warning(
+                    "User not found, or admin accounts cannot be deleted."
+                )
+
+        else:
+            st.warning("Please enter a username.")
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # CHAT HISTORY
+    # -----------------------------------------------------
+
+    st.subheader("💬 User Chat History")
+
+    history_username = st.text_input(
+        "Enter username to view chat history",
+        key="history_username"
+    )
+
+    if st.button("View Chat History"):
+
+        if history_username:
+
+            db = get_db_connection()
+            cursor = db.cursor(dictionary=True)
+
+            cursor.execute(
+                """
+                SELECT
+                    u.username,
+                    c.user_message,
+                    c.bot_response,
+                    c.created_at
+                FROM chat_history c
+                JOIN users u
+                ON c.user_id = u.id
+                WHERE u.username = %s
+                ORDER BY c.created_at DESC
+                """,
+                (history_username,)
+            )
+
+            history = cursor.fetchall()
+
+            cursor.close()
+            db.close()
+
+            if history:
+
+                st.dataframe(
+                    history,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            else:
+
+                st.info(
+                    "No chat history found for this user."
+                )
+
+        else:
+
+            st.warning("Please enter a username.")
+
+
+# =========================================================
+# NORMAL CHATBOT
+# =========================================================
+
+def show_chatbot():
+
+    st.title("🤖 Eclipse AI")
+
+    st.write(
+        "Your AI assistant — ask me anything!"
+    )
+
+    # -----------------------------------------------------
+    # DISPLAY PREVIOUS MESSAGES
+    # -----------------------------------------------------
+
+    for message in st.session_state.messages:
+
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # -----------------------------------------------------
+    # USER INPUT
+    # -----------------------------------------------------
+
+    prompt = st.chat_input(
+        "Ask me anything..."
+    )
+
+    if prompt:
+
+        st.session_state.messages.append(
+            {
+                "role": "user",
+                "content": prompt
+            }
         )
+
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        try:
+
+            response = client.models.generate_content(
+                model="gemini-3.5-flash",
+                contents=prompt
+            )
+
+            answer = response.text
+
+        except Exception as e:
+
+            error_text = str(e)
+
+            if "503" in error_text or "UNAVAILABLE" in error_text:
+
+                answer = (
+                    "⚠️ Gemini is temporarily busy right now. "
+                    "Please try again in a few seconds."
+                )
+
+            elif "401" in error_text or "UNAUTHENTICATED" in error_text:
+
+                answer = (
+                    "🔐 Gemini authentication failed. "
+                    "Please check the API key in Streamlit Secrets."
+                )
+
+            elif "429" in error_text or "RESOURCE_EXHAUSTED" in error_text:
+
+                answer = (
+                    "⏳ Gemini API limit reached. "
+                    "Please try again later."
+                )
+
+            else:
+
+                answer = f"❌ Error: {error_text}"
+
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": answer
+            }
+        )
+
+        with st.chat_message("assistant"):
+            st.markdown(answer)
+
+
+# =========================================================
+# MAIN APPLICATION
+# =========================================================
+
+if st.session_state.admin_logged_in:
+
+    show_admin_dashboard()
+
+else:
+
+    # Sidebar navigation
+    st.sidebar.title("🤖 Eclipse AI")
+
+    page = st.sidebar.radio(
+        "Navigation",
+        [
+            "💬 AI Chat",
+            "🔐 Admin Login"
+        ]
+    )
+
+    # -----------------------------------------------------
+    # AI CHAT
+    # -----------------------------------------------------
+
+    if page == "💬 AI Chat":
+
+        show_chatbot()
+
+    # -----------------------------------------------------
+    # ADMIN LOGIN
+    # -----------------------------------------------------
+
+    elif page == "🔐 Admin Login":
+
+        st.title("🔐 Admin Login")
+
+        st.write(
+            "Login using your administrator account."
+        )
+
+        username = st.text_input(
+            "Username"
+        )
+
+        password = st.text_input(
+            "Password",
+            type="password"
+        )
+
+        if st.button("Login"):
+
+            if username and password:
+
+                try:
+
+                    success, message = admin_login(
+                        username,
+                        password
+                    )
+
+                    if success:
+
+                        st.session_state.admin_logged_in = True
+                        st.session_state.admin_username = username
+
+                        st.success(message)
+
+                        st.rerun()
+
+                    else:
+
+                        st.error(message)
+
+                except Exception as e:
+
+                    st.error(
+                        "Login error:"
+                    )
+
+                    st.code(
+                        str(e)
+                    )
+
+            else:
+
+                st.warning(
+                    "Please enter username and password."
+                )
