@@ -58,6 +58,9 @@ if "user_id" not in st.session_state:
 if "username" not in st.session_state:
     st.session_state.username = None
 
+if "current_conversation_id" not in st.session_state:
+    st.session_state.current_conversation_id = None
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -114,7 +117,6 @@ def register_user(username, email, password):
     db = get_db_connection()
     cursor = db.cursor(dictionary=True)
 
-    # Check username
     cursor.execute(
         "SELECT id FROM users WHERE username = %s",
         (username,)
@@ -125,7 +127,6 @@ def register_user(username, email, password):
         db.close()
         return False, "Username already exists."
 
-    # Check email
     cursor.execute(
         "SELECT id FROM users WHERE email = %s",
         (email,)
@@ -136,13 +137,11 @@ def register_user(username, email, password):
         db.close()
         return False, "Email already registered."
 
-    # Hash password
     password_hash = bcrypt.hashpw(
         password.encode("utf-8"),
         bcrypt.gensalt()
     ).decode("utf-8")
 
-    # Insert user
     cursor.execute(
         """
         INSERT INTO users
@@ -213,340 +212,257 @@ def user_logout():
     st.session_state.user_logged_in = False
     st.session_state.user_id = None
     st.session_state.username = None
+    st.session_state.current_conversation_id = None
     st.session_state.messages = []
 
     st.rerun()
 
 
 # =========================================================
-# ADMIN DASHBOARD
+# CREATE NEW CONVERSATION
 # =========================================================
 
-def show_admin_dashboard():
-
-    st.title("🛠️ Eclipse AI - Admin Dashboard")
-
-    st.write(
-        f"Welcome, **{st.session_state.admin_username}** 👋"
-    )
-
-    st.divider()
-
-    if st.button("🚪 Admin Logout"):
-
-        st.session_state.admin_logged_in = False
-        st.session_state.admin_username = None
-
-        st.rerun()
-
-    st.divider()
-
-    # -----------------------------------------------------
-    # STATISTICS
-    # -----------------------------------------------------
+def create_conversation(user_id, title="New Chat"):
 
     db = get_db_connection()
-    cursor = db.cursor(dictionary=True)
-
-    cursor.execute("SELECT COUNT(*) AS total FROM users")
-    total_users = cursor.fetchone()["total"]
+    cursor = db.cursor()
 
     cursor.execute(
-        "SELECT COUNT(*) AS total FROM users WHERE status = 'active'"
+        """
+        INSERT INTO conversations
+        (user_id, title)
+        VALUES
+        (%s, %s)
+        """,
+        (user_id, title)
     )
-    active_users = cursor.fetchone()["total"]
 
-    cursor.execute(
-        "SELECT COUNT(*) AS total FROM users WHERE status = 'disabled'"
-    )
-    disabled_users = cursor.fetchone()["total"]
+    db.commit()
 
-    cursor.execute(
-        "SELECT COUNT(*) AS total FROM chat_history"
-    )
-    total_chats = cursor.fetchone()["total"]
+    conversation_id = cursor.lastrowid
 
     cursor.close()
     db.close()
 
-    col1, col2, col3, col4 = st.columns(4)
+    return conversation_id
 
-    with col1:
-        st.metric("👥 Total Users", total_users)
 
-    with col2:
-        st.metric("🟢 Active Users", active_users)
+# =========================================================
+# GET USER CONVERSATIONS
+# =========================================================
 
-    with col3:
-        st.metric("🔴 Disabled Users", disabled_users)
-
-    with col4:
-        st.metric("💬 Total Chats", total_chats)
-
-    st.divider()
-
-    # -----------------------------------------------------
-    # USER MANAGEMENT
-    # -----------------------------------------------------
-
-    st.subheader("👥 User Management")
+def get_user_conversations(user_id):
 
     db = get_db_connection()
     cursor = db.cursor(dictionary=True)
 
     cursor.execute(
         """
-        SELECT id, username, email, role, status, created_at
-        FROM users
-        ORDER BY id DESC
-        """
+        SELECT id, title, created_at, updated_at
+        FROM conversations
+        WHERE user_id = %s
+        ORDER BY updated_at DESC, id DESC
+        """,
+        (user_id,)
     )
 
-    users = cursor.fetchall()
+    conversations = cursor.fetchall()
 
     cursor.close()
     db.close()
 
-    if users:
+    return conversations
 
-        st.dataframe(
-            users,
-            use_container_width=True,
-            hide_index=True
-        )
 
-    else:
+# =========================================================
+# LOAD CONVERSATION
+# =========================================================
 
-        st.info("No users found.")
+def load_conversation(conversation_id, user_id):
 
-    st.divider()
+    db = get_db_connection()
+    cursor = db.cursor(dictionary=True)
 
-    # -----------------------------------------------------
-    # SEARCH USER
-    # -----------------------------------------------------
-
-    st.subheader("🔎 Search User")
-
-    search_username = st.text_input(
-        "Enter username"
+    # Make sure this conversation belongs to this user
+    cursor.execute(
+        """
+        SELECT id, title
+        FROM conversations
+        WHERE id = %s
+        AND user_id = %s
+        """,
+        (conversation_id, user_id)
     )
 
-    if search_username:
+    conversation = cursor.fetchone()
 
-        db = get_db_connection()
-        cursor = db.cursor(dictionary=True)
-
-        cursor.execute(
-            """
-            SELECT id, username, email, role, status, created_at
-            FROM users
-            WHERE username LIKE %s
-            """,
-            (f"%{search_username}%",)
-        )
-
-        search_results = cursor.fetchall()
+    if not conversation:
 
         cursor.close()
         db.close()
 
-        if search_results:
+        return None, []
 
-            st.dataframe(
-                search_results,
-                use_container_width=True,
-                hide_index=True
-            )
-
-        else:
-
-            st.warning("No matching user found.")
-
-    st.divider()
-
-    # -----------------------------------------------------
-    # ENABLE / DISABLE USER
-    # -----------------------------------------------------
-
-    st.subheader("🟢🔴 Change User Status")
-
-    username_status = st.text_input(
-        "Username",
-        key="status_username"
+    cursor.execute(
+        """
+        SELECT user_message, bot_response
+        FROM chat_history
+        WHERE conversation_id = %s
+        AND user_id = %s
+        ORDER BY id ASC
+        """,
+        (conversation_id, user_id)
     )
 
-    new_status = st.selectbox(
-        "Select status",
-        ["active", "disabled"]
+    history = cursor.fetchall()
+
+    cursor.close()
+    db.close()
+
+    messages = []
+
+    for item in history:
+
+        messages.append(
+            {
+                "role": "user",
+                "content": item["user_message"]
+            }
+        )
+
+        messages.append(
+            {
+                "role": "assistant",
+                "content": item["bot_response"]
+            }
+        )
+
+    return conversation, messages
+
+
+# =========================================================
+# SAVE CHAT MESSAGE
+# =========================================================
+
+def save_chat_message(
+    user_id,
+    conversation_id,
+    user_message,
+    bot_response
+):
+
+    db = get_db_connection()
+    cursor = db.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO chat_history
+        (user_id, conversation_id, user_message, bot_response)
+        VALUES
+        (%s, %s, %s, %s)
+        """,
+        (
+            user_id,
+            conversation_id,
+            user_message,
+            bot_response
+        )
     )
 
-    if st.button("Update Status"):
-
-        if username_status:
-
-            db = get_db_connection()
-            cursor = db.cursor()
-
-            cursor.execute(
-                """
-                UPDATE users
-                SET status = %s
-                WHERE username = %s
-                AND role != 'admin'
-                """,
-                (new_status, username_status)
-            )
-
-            db.commit()
-
-            affected_rows = cursor.rowcount
-
-            cursor.close()
-            db.close()
-
-            if affected_rows > 0:
-
-                st.success(
-                    f"User '{username_status}' status changed to '{new_status}'."
-                )
-
-                st.rerun()
-
-            else:
-
-                st.warning(
-                    "User not found, or admin accounts cannot be changed here."
-                )
-
-        else:
-
-            st.warning("Please enter a username.")
-
-    st.divider()
-
-    # -----------------------------------------------------
-    # DELETE USER
-    # -----------------------------------------------------
-
-    st.subheader("🗑️ Delete User")
-
-    delete_username = st.text_input(
-        "Username to delete",
-        key="delete_username"
+    cursor.execute(
+        """
+        UPDATE conversations
+        SET updated_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+        AND user_id = %s
+        """,
+        (
+            conversation_id,
+            user_id
+        )
     )
 
-    if st.button("Delete User"):
+    db.commit()
 
-        if delete_username:
+    cursor.close()
+    db.close()
 
-            db = get_db_connection()
-            cursor = db.cursor()
 
-            cursor.execute(
-                """
-                DELETE FROM chat_history
-                WHERE user_id = (
-                    SELECT id
-                    FROM users
-                    WHERE username = %s
-                    AND role != 'admin'
-                )
-                """,
-                (delete_username,)
-            )
+# =========================================================
+# UPDATE CONVERSATION TITLE
+# =========================================================
 
-            cursor.execute(
-                """
-                DELETE FROM users
-                WHERE username = %s
-                AND role != 'admin'
-                """,
-                (delete_username,)
-            )
+def update_conversation_title(
+    conversation_id,
+    user_id,
+    title
+):
 
-            db.commit()
+    db = get_db_connection()
+    cursor = db.cursor()
 
-            affected_rows = cursor.rowcount
-
-            cursor.close()
-            db.close()
-
-            if affected_rows > 0:
-
-                st.success(
-                    f"User '{delete_username}' deleted successfully."
-                )
-
-                st.rerun()
-
-            else:
-
-                st.warning(
-                    "User not found, or admin accounts cannot be deleted."
-                )
-
-        else:
-
-            st.warning("Please enter a username.")
-
-    st.divider()
-
-    # -----------------------------------------------------
-    # CHAT HISTORY
-    # -----------------------------------------------------
-
-    st.subheader("💬 User Chat History")
-
-    history_username = st.text_input(
-        "Enter username to view chat history",
-        key="history_username"
+    cursor.execute(
+        """
+        UPDATE conversations
+        SET title = %s
+        WHERE id = %s
+        AND user_id = %s
+        """,
+        (
+            title,
+            conversation_id,
+            user_id
+        )
     )
 
-    if st.button("View Chat History"):
+    db.commit()
 
-        if history_username:
+    cursor.close()
+    db.close()
 
-            db = get_db_connection()
-            cursor = db.cursor(dictionary=True)
 
-            cursor.execute(
-                """
-                SELECT
-                    u.username,
-                    c.user_message,
-                    c.bot_response,
-                    c.created_at
-                FROM chat_history c
-                JOIN users u
-                ON c.user_id = u.id
-                WHERE u.username = %s
-                ORDER BY c.created_at DESC
-                """,
-                (history_username,)
-            )
+# =========================================================
+# DELETE CONVERSATION
+# =========================================================
 
-            history = cursor.fetchall()
+def delete_conversation(
+    conversation_id,
+    user_id
+):
 
-            cursor.close()
-            db.close()
+    db = get_db_connection()
+    cursor = db.cursor()
 
-            if history:
+    # Delete messages first
+    cursor.execute(
+        """
+        DELETE FROM chat_history
+        WHERE conversation_id = %s
+        AND user_id = %s
+        """,
+        (
+            conversation_id,
+            user_id
+        )
+    )
 
-                st.dataframe(
-                    history,
-                    use_container_width=True,
-                    hide_index=True
-                )
+    # Delete conversation
+    cursor.execute(
+        """
+        DELETE FROM conversations
+        WHERE id = %s
+        AND user_id = %s
+        """,
+        (
+            conversation_id,
+            user_id
+        )
+    )
 
-            else:
+    db.commit()
 
-                st.info(
-                    "No chat history found for this user."
-                )
-
-        else:
-
-            st.warning("Please enter a username.")
+    cursor.close()
+    db.close()
 
 
 # =========================================================
@@ -555,27 +471,130 @@ def show_admin_dashboard():
 
 def show_user_chatbot():
 
-    st.title("🤖 Eclipse AI")
+    # -----------------------------------------------------
+    # SIDEBAR
+    # -----------------------------------------------------
 
-    st.write(
-        f"Welcome, **{st.session_state.username}**! 👋"
-    )
+    with st.sidebar:
 
-    if st.button("🚪 Logout"):
+        st.title("🤖 Eclipse AI")
 
-        user_logout()
+        st.write(
+            f"👋 {st.session_state.username}"
+        )
 
-    st.divider()
+        st.divider()
+
+        # New chat
+        if st.button(
+            "➕ New Chat",
+            use_container_width=True
+        ):
+
+            conversation_id = create_conversation(
+                st.session_state.user_id
+            )
+
+            st.session_state.current_conversation_id = conversation_id
+            st.session_state.messages = []
+
+            st.rerun()
+
+        st.divider()
+
+        st.subheader("🕘 Recent Chats")
+
+        conversations = get_user_conversations(
+            st.session_state.user_id
+        )
+
+        if conversations:
+
+            for conversation in conversations:
+
+                title = conversation["title"]
+
+                if len(title) > 28:
+                    title = title[:28] + "..."
+
+                # Conversation button
+                if st.button(
+                    f"💬 {title}",
+                    key=f"chat_{conversation['id']}",
+                    use_container_width=True
+                ):
+
+                    loaded_conversation, messages = load_conversation(
+                        conversation["id"],
+                        st.session_state.user_id
+                    )
+
+                    if loaded_conversation:
+
+                        st.session_state.current_conversation_id = (
+                            loaded_conversation["id"]
+                        )
+
+                        st.session_state.messages = messages
+
+                        st.rerun()
+
+        else:
+
+            st.caption(
+                "No conversations yet."
+            )
+
+        st.divider()
+
+        # Delete current conversation
+        if st.session_state.current_conversation_id:
+
+            if st.button(
+                "🗑️ Delete Current Chat",
+                use_container_width=True
+            ):
+
+                delete_conversation(
+                    st.session_state.current_conversation_id,
+                    st.session_state.user_id
+                )
+
+                st.session_state.current_conversation_id = None
+                st.session_state.messages = []
+
+                st.rerun()
+
+        st.divider()
+
+        if st.button(
+            "🚪 Logout",
+            use_container_width=True
+        ):
+
+            user_logout()
 
     # -----------------------------------------------------
-    # DISPLAY CHAT
+    # MAIN CHAT AREA
+    # -----------------------------------------------------
+
+    st.title("🤖 Eclipse AI")
+
+    st.caption(
+        f"Logged in as {st.session_state.username}"
+    )
+
+    # -----------------------------------------------------
+    # DISPLAY MESSAGES
     # -----------------------------------------------------
 
     for message in st.session_state.messages:
 
         with st.chat_message(message["role"]):
 
-            st.markdown(message["content"])
+            st.markdown(
+                message["content"]
+            )
 
     # -----------------------------------------------------
     # CHAT INPUT
@@ -587,6 +606,26 @@ def show_user_chatbot():
 
     if prompt:
 
+        # Create conversation automatically
+        # if this is the first message
+        if st.session_state.current_conversation_id is None:
+
+            conversation_id = create_conversation(
+                st.session_state.user_id,
+                prompt[:60]
+            )
+
+            st.session_state.current_conversation_id = (
+                conversation_id
+            )
+
+        else:
+
+            conversation_id = (
+                st.session_state.current_conversation_id
+            )
+
+        # Display user message
         st.session_state.messages.append(
             {
                 "role": "user",
@@ -597,6 +636,10 @@ def show_user_chatbot():
         with st.chat_message("user"):
 
             st.markdown(prompt)
+
+        # -------------------------------------------------
+        # GEMINI
+        # -------------------------------------------------
 
         try:
 
@@ -636,7 +679,10 @@ def show_user_chatbot():
 
                 answer = f"❌ Error: {error_text}"
 
-        # Save response in session
+        # -------------------------------------------------
+        # SAVE MESSAGE IN SESSION
+        # -------------------------------------------------
+
         st.session_state.messages.append(
             {
                 "role": "assistant",
@@ -644,36 +690,44 @@ def show_user_chatbot():
             }
         )
 
-        # Save chat to database
+        # -------------------------------------------------
+        # SAVE TO DATABASE
+        # -------------------------------------------------
+
         try:
 
-            db = get_db_connection()
-            cursor = db.cursor()
-
-            cursor.execute(
-                """
-                INSERT INTO chat_history
-                (user_id, user_message, bot_response)
-                VALUES
-                (%s, %s, %s)
-                """,
-                (
-                    st.session_state.user_id,
-                    prompt,
-                    answer
-                )
+            save_chat_message(
+                st.session_state.user_id,
+                conversation_id,
+                prompt,
+                answer
             )
 
-            db.commit()
+            # First message becomes title
+            if len(st.session_state.messages) == 2:
 
-            cursor.close()
-            db.close()
+                title = prompt.strip()
 
-        except Exception as e:
+                if len(title) > 60:
+
+                    title = title[:60] + "..."
+
+                update_conversation_title(
+                    conversation_id,
+                    st.session_state.user_id,
+                    title
+                )
+
+        except Exception:
 
             st.warning(
-                "⚠️ Chat response was generated, but it could not be saved to the database."
+                "⚠️ Response generated, "
+                "but chat could not be saved."
             )
+
+        # -------------------------------------------------
+        # DISPLAY AI RESPONSE
+        # -------------------------------------------------
 
         with st.chat_message("assistant"):
 
@@ -800,6 +854,7 @@ def show_user_login():
                     st.session_state.user_logged_in = True
                     st.session_state.user_id = user_id
                     st.session_state.username = username
+                    st.session_state.current_conversation_id = None
                     st.session_state.messages = []
 
                     st.success(message)
@@ -819,6 +874,407 @@ def show_user_login():
                 st.code(
                     str(e)
                 )
+
+
+# =========================================================
+# ADMIN DASHBOARD
+# =========================================================
+
+def show_admin_dashboard():
+
+    st.title("🛠️ Eclipse AI - Admin Dashboard")
+
+    st.write(
+        f"Welcome, **{st.session_state.admin_username}** 👋"
+    )
+
+    st.divider()
+
+    if st.button("🚪 Admin Logout"):
+
+        st.session_state.admin_logged_in = False
+        st.session_state.admin_username = None
+
+        st.rerun()
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # STATISTICS
+    # -----------------------------------------------------
+
+    db = get_db_connection()
+    cursor = db.cursor(dictionary=True)
+
+    cursor.execute(
+        "SELECT COUNT(*) AS total FROM users"
+    )
+
+    total_users = cursor.fetchone()["total"]
+
+    cursor.execute(
+        """
+        SELECT COUNT(*) AS total
+        FROM users
+        WHERE status = 'active'
+        """
+    )
+
+    active_users = cursor.fetchone()["total"]
+
+    cursor.execute(
+        """
+        SELECT COUNT(*) AS total
+        FROM users
+        WHERE status = 'disabled'
+        """
+    )
+
+    disabled_users = cursor.fetchone()["total"]
+
+    cursor.execute(
+        "SELECT COUNT(*) AS total FROM chat_history"
+    )
+
+    total_chats = cursor.fetchone()["total"]
+
+    cursor.close()
+    db.close()
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.metric(
+            "👥 Total Users",
+            total_users
+        )
+
+    with col2:
+        st.metric(
+            "🟢 Active Users",
+            active_users
+        )
+
+    with col3:
+        st.metric(
+            "🔴 Disabled Users",
+            disabled_users
+        )
+
+    with col4:
+        st.metric(
+            "💬 Total Chats",
+            total_chats
+        )
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # USER MANAGEMENT
+    # -----------------------------------------------------
+
+    st.subheader("👥 User Management")
+
+    db = get_db_connection()
+    cursor = db.cursor(dictionary=True)
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            username,
+            email,
+            role,
+            status,
+            created_at
+        FROM users
+        ORDER BY id DESC
+        """
+    )
+
+    users = cursor.fetchall()
+
+    cursor.close()
+    db.close()
+
+    if users:
+
+        st.dataframe(
+            users,
+            use_container_width=True,
+            hide_index=True
+        )
+
+    else:
+
+        st.info(
+            "No users found."
+        )
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # SEARCH USER
+    # -----------------------------------------------------
+
+    st.subheader("🔎 Search User")
+
+    search_username = st.text_input(
+        "Enter username"
+    )
+
+    if search_username:
+
+        db = get_db_connection()
+        cursor = db.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                username,
+                email,
+                role,
+                status,
+                created_at
+            FROM users
+            WHERE username LIKE %s
+            """,
+            (f"%{search_username}%",)
+        )
+
+        search_results = cursor.fetchall()
+
+        cursor.close()
+        db.close()
+
+        if search_results:
+
+            st.dataframe(
+                search_results,
+                use_container_width=True,
+                hide_index=True
+            )
+
+        else:
+
+            st.warning(
+                "No matching user found."
+            )
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # ENABLE / DISABLE USER
+    # -----------------------------------------------------
+
+    st.subheader("🟢🔴 Change User Status")
+
+    username_status = st.text_input(
+        "Username",
+        key="status_username"
+    )
+
+    new_status = st.selectbox(
+        "Select status",
+        [
+            "active",
+            "disabled"
+        ]
+    )
+
+    if st.button("Update Status"):
+
+        if username_status:
+
+            db = get_db_connection()
+            cursor = db.cursor()
+
+            cursor.execute(
+                """
+                UPDATE users
+                SET status = %s
+                WHERE username = %s
+                AND role != 'admin'
+                """,
+                (
+                    new_status,
+                    username_status
+                )
+            )
+
+            db.commit()
+
+            affected_rows = cursor.rowcount
+
+            cursor.close()
+            db.close()
+
+            if affected_rows > 0:
+
+                st.success(
+                    f"User '{username_status}' status changed to '{new_status}'."
+                )
+
+                st.rerun()
+
+            else:
+
+                st.warning(
+                    "User not found, or admin accounts cannot be changed here."
+                )
+
+        else:
+
+            st.warning(
+                "Please enter a username."
+            )
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # DELETE USER
+    # -----------------------------------------------------
+
+    st.subheader("🗑️ Delete User")
+
+    delete_username = st.text_input(
+        "Username to delete",
+        key="delete_username"
+    )
+
+    if st.button("Delete User"):
+
+        if delete_username:
+
+            db = get_db_connection()
+            cursor = db.cursor()
+
+            cursor.execute(
+                """
+                DELETE FROM chat_history
+                WHERE user_id = (
+                    SELECT id
+                    FROM users
+                    WHERE username = %s
+                    AND role != 'admin'
+                )
+                """,
+                (delete_username,)
+            )
+
+            cursor.execute(
+                """
+                DELETE FROM conversations
+                WHERE user_id = (
+                    SELECT id
+                    FROM users
+                    WHERE username = %s
+                    AND role != 'admin'
+                )
+                """,
+                (delete_username,)
+            )
+
+            cursor.execute(
+                """
+                DELETE FROM users
+                WHERE username = %s
+                AND role != 'admin'
+                """,
+                (delete_username,)
+            )
+
+            db.commit()
+
+            affected_rows = cursor.rowcount
+
+            cursor.close()
+            db.close()
+
+            if affected_rows > 0:
+
+                st.success(
+                    f"User '{delete_username}' deleted successfully."
+                )
+
+                st.rerun()
+
+            else:
+
+                st.warning(
+                    "User not found, or admin accounts cannot be deleted."
+                )
+
+        else:
+
+            st.warning(
+                "Please enter a username."
+            )
+
+    st.divider()
+
+    # -----------------------------------------------------
+    # CHAT HISTORY
+    # -----------------------------------------------------
+
+    st.subheader("💬 User Chat History")
+
+    history_username = st.text_input(
+        "Enter username to view chat history",
+        key="history_username"
+    )
+
+    if st.button("View Chat History"):
+
+        if history_username:
+
+            db = get_db_connection()
+            cursor = db.cursor(dictionary=True)
+
+            cursor.execute(
+                """
+                SELECT
+                    u.username,
+                    c.title,
+                    h.user_message,
+                    h.bot_response,
+                    h.created_at
+                FROM chat_history h
+                JOIN users u
+                    ON h.user_id = u.id
+                JOIN conversations c
+                    ON h.conversation_id = c.id
+                WHERE u.username = %s
+                ORDER BY h.created_at DESC
+                """,
+                (history_username,)
+            )
+
+            history = cursor.fetchall()
+
+            cursor.close()
+            db.close()
+
+            if history:
+
+                st.dataframe(
+                    history,
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            else:
+
+                st.info(
+                    "No chat history found for this user."
+                )
+
+        else:
+
+            st.warning(
+                "Please enter a username."
+            )
 
 
 # =========================================================
