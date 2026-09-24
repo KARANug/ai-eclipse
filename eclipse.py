@@ -1015,7 +1015,27 @@ def show_user_chatbot():
 
         with st.chat_message("assistant"):
 
-            with st.spinner("Thinking... 🤔"):
+    with st.spinner("Thinking... 🤔"):
+
+        bot_response = None
+
+        # Try Gemini 3.5 Flash first
+        try:
+
+            response = client.models.generate_content(
+                model="gemini-3.5-flash",
+                contents=gemini_context
+            )
+
+            bot_response = response.text
+
+        except Exception as first_error:
+
+            first_error_text = str(first_error)
+
+            # If Gemini 3.5 Flash is temporarily busy,
+            # try again once.
+            if "503" in first_error_text:
 
                 try:
 
@@ -1025,6 +1045,69 @@ def show_user_chatbot():
                     )
 
                     bot_response = response.text
+
+                except Exception:
+
+                    bot_response = None
+
+            # ------------------------------------------------
+            # FALLBACK MODEL
+            # ------------------------------------------------
+
+            if bot_response is None:
+
+                try:
+
+                    response = client.models.generate_content(
+                        model="gemini-3.1-flash-lite",
+                        contents=gemini_context
+                    )
+
+                    bot_response = response.text
+
+                except Exception as fallback_error:
+
+                    fallback_error_text = str(
+                        fallback_error
+                    )
+
+                    if (
+                        "401" in fallback_error_text
+                        or
+                        "authentication"
+                        in fallback_error_text.lower()
+                    ):
+
+                        bot_response = (
+                            "❌ Gemini authentication failed. "
+                            "Please check the API key in "
+                            "Streamlit Secrets."
+                        )
+
+                    elif "429" in fallback_error_text:
+
+                        bot_response = (
+                            "⚠️ Gemini API rate limit reached. "
+                            "Please try again later."
+                        )
+
+                    elif "503" in fallback_error_text:
+
+                        bot_response = (
+                            "⚠️ Gemini is temporarily busy. "
+                            "Both Gemini models are currently "
+                            "unavailable. Please try again in "
+                            "a few seconds."
+                        )
+
+                    else:
+
+                        bot_response = (
+                            "❌ Something went wrong:\n\n"
+                            + fallback_error_text
+                        )
+
+        st.markdown(bot_response)
 
                 except Exception as e:
 
