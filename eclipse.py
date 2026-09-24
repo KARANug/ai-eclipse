@@ -64,6 +64,9 @@ if "current_conversation_id" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+if "admin_history_user" not in st.session_state:
+    st.session_state.admin_history_user = None
+
 
 # ============================================================
 # ADMIN LOGIN
@@ -127,8 +130,10 @@ def register_user(username, email, password):
     existing_user = cursor.fetchone()
 
     if existing_user:
+
         cursor.close()
         conn.close()
+
         return False, "Username or email already exists."
 
     password_hash = bcrypt.hashpw(
@@ -139,10 +144,27 @@ def register_user(username, email, password):
     cursor.execute(
         """
         INSERT INTO users
-        (username, email, password_hash, role, status)
-        VALUES (%s, %s, %s, 'user', 'active')
+        (
+            username,
+            email,
+            password_hash,
+            role,
+            status
+        )
+        VALUES
+        (
+            %s,
+            %s,
+            %s,
+            'user',
+            'active'
+        )
         """,
-        (username, email, password_hash)
+        (
+            username,
+            email,
+            password_hash
+        )
     )
 
     conn.commit()
@@ -195,7 +217,7 @@ def user_login(username, password):
 
 
 # ============================================================
-# LOGOUT USER
+# USER LOGOUT
 # ============================================================
 
 def logout_user():
@@ -210,7 +232,7 @@ def logout_user():
 
 
 # ============================================================
-# CONVERSATION FUNCTIONS
+# CREATE CONVERSATION
 # ============================================================
 
 def create_conversation(user_id, title="New Chat"):
@@ -221,10 +243,20 @@ def create_conversation(user_id, title="New Chat"):
     cursor.execute(
         """
         INSERT INTO conversations
-        (user_id, title)
-        VALUES (%s, %s)
+        (
+            user_id,
+            title
+        )
+        VALUES
+        (
+            %s,
+            %s
+        )
         """,
-        (user_id, title)
+        (
+            user_id,
+            title
+        )
     )
 
     conversation_id = cursor.lastrowid
@@ -237,6 +269,10 @@ def create_conversation(user_id, title="New Chat"):
     return conversation_id
 
 
+# ============================================================
+# GET USER CONVERSATIONS
+# ============================================================
+
 def get_user_conversations(user_id):
 
     conn = get_db_connection()
@@ -244,7 +280,11 @@ def get_user_conversations(user_id):
 
     cursor.execute(
         """
-        SELECT id, title, created_at, updated_at
+        SELECT
+            id,
+            title,
+            created_at,
+            updated_at
         FROM conversations
         WHERE user_id = %s
         ORDER BY updated_at DESC, id DESC
@@ -260,6 +300,10 @@ def get_user_conversations(user_id):
     return conversations
 
 
+# ============================================================
+# LOAD CONVERSATION
+# ============================================================
+
 def load_conversation(conversation_id, user_id):
 
     conn = get_db_connection()
@@ -267,29 +311,42 @@ def load_conversation(conversation_id, user_id):
 
     cursor.execute(
         """
-        SELECT id, title
+        SELECT
+            id,
+            title
         FROM conversations
-        WHERE id = %s AND user_id = %s
+        WHERE id = %s
+        AND user_id = %s
         """,
-        (conversation_id, user_id)
+        (
+            conversation_id,
+            user_id
+        )
     )
 
     conversation = cursor.fetchone()
 
     if not conversation:
+
         cursor.close()
         conn.close()
+
         return None, []
 
     cursor.execute(
         """
-        SELECT user_message, bot_response
+        SELECT
+            user_message,
+            bot_response
         FROM chat_history
         WHERE conversation_id = %s
         AND user_id = %s
         ORDER BY id ASC
         """,
-        (conversation_id, user_id)
+        (
+            conversation_id,
+            user_id
+        )
     )
 
     history = cursor.fetchall()
@@ -301,18 +358,26 @@ def load_conversation(conversation_id, user_id):
 
     for item in history:
 
-        messages.append({
-            "role": "user",
-            "content": item["user_message"]
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": item["user_message"]
+            }
+        )
 
-        messages.append({
-            "role": "assistant",
-            "content": item["bot_response"]
-        })
+        messages.append(
+            {
+                "role": "assistant",
+                "content": item["bot_response"]
+            }
+        )
 
     return conversation, messages
 
+
+# ============================================================
+# SAVE CHAT MESSAGE
+# ============================================================
 
 def save_chat_message(
     user_id,
@@ -333,7 +398,13 @@ def save_chat_message(
             user_message,
             bot_response
         )
-        VALUES (%s, %s, %s, %s)
+        VALUES
+        (
+            %s,
+            %s,
+            %s,
+            %s
+        )
         """,
         (
             user_id,
@@ -350,7 +421,10 @@ def save_chat_message(
         WHERE id = %s
         AND user_id = %s
         """,
-        (conversation_id, user_id)
+        (
+            conversation_id,
+            user_id
+        )
     )
 
     conn.commit()
@@ -358,6 +432,10 @@ def save_chat_message(
     cursor.close()
     conn.close()
 
+
+# ============================================================
+# UPDATE CONVERSATION TITLE
+# ============================================================
 
 def update_conversation_title(
     conversation_id,
@@ -388,6 +466,10 @@ def update_conversation_title(
     conn.close()
 
 
+# ============================================================
+# DELETE CONVERSATION
+# ============================================================
+
 def delete_conversation(
     conversation_id,
     user_id
@@ -402,7 +484,10 @@ def delete_conversation(
         WHERE conversation_id = %s
         AND user_id = %s
         """,
-        (conversation_id, user_id)
+        (
+            conversation_id,
+            user_id
+        )
     )
 
     cursor.execute(
@@ -411,7 +496,10 @@ def delete_conversation(
         WHERE id = %s
         AND user_id = %s
         """,
-        (conversation_id, user_id)
+        (
+            conversation_id,
+            user_id
+        )
     )
 
     conn.commit()
@@ -421,7 +509,7 @@ def delete_conversation(
 
 
 # ============================================================
-# BUILD GEMINI CONVERSATION CONTEXT
+# BUILD GEMINI CONTEXT
 # ============================================================
 
 def build_gemini_context(messages, new_prompt):
@@ -431,21 +519,166 @@ def build_gemini_context(messages, new_prompt):
     for message in messages:
 
         if message["role"] == "user":
+
             conversation_text += (
-                f"User: {message['content']}\n"
+                "User: "
+                + message["content"]
+                + "\n"
             )
 
         elif message["role"] == "assistant":
+
             conversation_text += (
-                f"Eclipse AI: {message['content']}\n"
+                "Eclipse AI: "
+                + message["content"]
+                + "\n"
             )
 
     conversation_text += (
-        f"User: {new_prompt}\n"
+        "User: "
+        + new_prompt
+        + "\n"
         "Eclipse AI:"
     )
 
     return conversation_text
+
+
+# ============================================================
+# GEMINI RESPONSE
+# ============================================================
+
+def get_gemini_response(prompt, messages):
+
+    context = build_gemini_context(
+        messages,
+        prompt
+    )
+
+    # --------------------------------------------------------
+    # FIRST ATTEMPT
+    # --------------------------------------------------------
+
+    try:
+
+        response = client.models.generate_content(
+            model="gemini-3.5-flash",
+            contents=context
+        )
+
+        if response.text:
+
+            return response.text
+
+    except Exception as first_error:
+
+        first_error_text = str(first_error)
+
+        # ----------------------------------------------------
+        # RETRY FOR TEMPORARY 503
+        # ----------------------------------------------------
+
+        if "503" in first_error_text:
+
+            try:
+
+                response = client.models.generate_content(
+                    model="gemini-3.5-flash",
+                    contents=context
+                )
+
+                if response.text:
+
+                    return response.text
+
+            except Exception:
+                pass
+
+        # ----------------------------------------------------
+        # AUTHENTICATION ERROR
+        # ----------------------------------------------------
+
+        if (
+            "401" in first_error_text
+            or
+            "authentication" in first_error_text.lower()
+        ):
+
+            return (
+                "❌ Gemini authentication failed.\n\n"
+                "Please check the GEMINI_API_KEY "
+                "in Streamlit Secrets."
+            )
+
+        # ----------------------------------------------------
+        # RATE LIMIT
+        # ----------------------------------------------------
+
+        if "429" in first_error_text:
+
+            return (
+                "⚠️ Gemini API rate limit reached.\n\n"
+                "Please wait a little and try again."
+            )
+
+        # ----------------------------------------------------
+        # FALLBACK MODEL
+        # ----------------------------------------------------
+
+        try:
+
+            response = client.models.generate_content(
+                model="gemini-3.1-flash-lite",
+                contents=context
+            )
+
+            if response.text:
+
+                return response.text
+
+        except Exception as fallback_error:
+
+            fallback_error_text = str(
+                fallback_error
+            )
+
+            if (
+                "401" in fallback_error_text
+                or
+                "authentication"
+                in fallback_error_text.lower()
+            ):
+
+                return (
+                    "❌ Gemini authentication failed.\n\n"
+                    "Please check the GEMINI_API_KEY "
+                    "in Streamlit Secrets."
+                )
+
+            if "429" in fallback_error_text:
+
+                return (
+                    "⚠️ Gemini API rate limit reached.\n\n"
+                    "Please try again later."
+                )
+
+            if "503" in fallback_error_text:
+
+                return (
+                    "⚠️ Gemini is temporarily busy right now.\n\n"
+                    "Please try again in a few seconds."
+                )
+
+            return (
+                "❌ Something went wrong while "
+                "connecting to Gemini.\n\n"
+                + fallback_error_text
+            )
+
+    return (
+        "⚠️ Gemini did not return a response.\n\n"
+        "Please try again."
+    )
 
 
 # ============================================================
@@ -469,9 +702,9 @@ def show_admin_dashboard():
 
     st.divider()
 
-    # --------------------------------------------------------
+    # ========================================================
     # STATISTICS
-    # --------------------------------------------------------
+    # ========================================================
 
     conn = get_db_connection()
     cursor = conn.cursor(dictionary=True)
@@ -522,16 +755,31 @@ def show_admin_dashboard():
 
     col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric("👥 Total Users", total_users)
-    col2.metric("🟢 Active Users", active_users)
-    col3.metric("🔴 Disabled Users", disabled_users)
-    col4.metric("💬 Total Chats", total_chats)
+    col1.metric(
+        "👥 Total Users",
+        total_users
+    )
+
+    col2.metric(
+        "🟢 Active Users",
+        active_users
+    )
+
+    col3.metric(
+        "🔴 Disabled Users",
+        disabled_users
+    )
+
+    col4.metric(
+        "💬 Total Chats",
+        total_chats
+    )
 
     st.divider()
 
-    # --------------------------------------------------------
+    # ========================================================
     # USER MANAGEMENT
-    # --------------------------------------------------------
+    # ========================================================
 
     st.subheader("👥 User Management")
 
@@ -547,16 +795,25 @@ def show_admin_dashboard():
 
         cursor.execute(
             """
-            SELECT id, username, email, role, status, created_at
+            SELECT
+                id,
+                username,
+                email,
+                role,
+                status,
+                created_at
             FROM users
             WHERE
-                (username LIKE %s OR email LIKE %s)
-            AND role = 'user'
+                (
+                    username LIKE %s
+                    OR email LIKE %s
+                )
+                AND role = 'user'
             ORDER BY id DESC
             """,
             (
-                f"%{search}%",
-                f"%{search}%"
+                "%" + search + "%",
+                "%" + search + "%"
             )
         )
 
@@ -564,7 +821,13 @@ def show_admin_dashboard():
 
         cursor.execute(
             """
-            SELECT id, username, email, role, status, created_at
+            SELECT
+                id,
+                username,
+                email,
+                role,
+                status,
+                created_at
             FROM users
             WHERE role = 'user'
             ORDER BY id DESC
@@ -715,11 +978,11 @@ def show_admin_dashboard():
 
         st.info("No users found.")
 
-    # --------------------------------------------------------
+    # ========================================================
     # CHAT HISTORY
-    # --------------------------------------------------------
+    # ========================================================
 
-    if "admin_history_user" in st.session_state:
+    if st.session_state.admin_history_user:
 
         selected_user = (
             st.session_state.admin_history_user
@@ -838,6 +1101,7 @@ def show_user_chatbot():
                 title = conversation["title"]
 
                 if len(title) > 30:
+
                     title = title[:30] + "..."
 
                 is_current = (
@@ -845,11 +1109,13 @@ def show_user_chatbot():
                     == st.session_state.current_conversation_id
                 )
 
-                button_text = (
-                    f"👉 {title}"
-                    if is_current
-                    else f"💬 {title}"
-                )
+                if is_current:
+
+                    button_text = "👉 " + title
+
+                else:
+
+                    button_text = "💬 " + title
 
                 if st.button(
                     button_text,
@@ -857,11 +1123,12 @@ def show_user_chatbot():
                     use_container_width=True
                 ):
 
-                    loaded_conversation, loaded_messages = (
-                        load_conversation(
-                            conversation["id"],
-                            st.session_state.user_id
-                        )
+                    (
+                        loaded_conversation,
+                        loaded_messages
+                    ) = load_conversation(
+                        conversation["id"],
+                        st.session_state.user_id
                     )
 
                     if loaded_conversation:
@@ -919,7 +1186,7 @@ def show_user_chatbot():
             logout_user()
 
     # ========================================================
-    # MAIN CHAT AREA
+    # MAIN CHAT
     # ========================================================
 
     st.title("🤖 Eclipse AI")
@@ -930,9 +1197,9 @@ def show_user_chatbot():
 
     st.divider()
 
-    # --------------------------------------------------------
-    # DISPLAY OLD MESSAGES
-    # --------------------------------------------------------
+    # ========================================================
+    # DISPLAY EXISTING MESSAGES
+    # ========================================================
 
     for message in st.session_state.messages:
 
@@ -944,9 +1211,9 @@ def show_user_chatbot():
                 message["content"]
             )
 
-    # --------------------------------------------------------
+    # ========================================================
     # CHAT INPUT
-    # --------------------------------------------------------
+    # ========================================================
 
     prompt = st.chat_input(
         "Message Eclipse AI..."
@@ -954,9 +1221,9 @@ def show_user_chatbot():
 
     if prompt:
 
-        # ----------------------------------------------------
-        # CREATE CONVERSATION ONLY WHEN FIRST MESSAGE IS SENT
-        # ----------------------------------------------------
+        # ====================================================
+        # CREATE CONVERSATION
+        # ====================================================
 
         is_first_message = (
             st.session_state.current_conversation_id
@@ -968,6 +1235,7 @@ def show_user_chatbot():
             title = prompt.strip()
 
             if len(title) > 60:
+
                 title = title[:60] + "..."
 
             conversation_id = create_conversation(
@@ -985,9 +1253,13 @@ def show_user_chatbot():
                 st.session_state.current_conversation_id
             )
 
-        # ----------------------------------------------------
-        # SHOW USER MESSAGE
-        # ----------------------------------------------------
+        # ====================================================
+        # SAVE USER MESSAGE IN SESSION
+        # ====================================================
+
+        previous_messages = (
+            st.session_state.messages.copy()
+        )
 
         st.session_state.messages.append(
             {
@@ -996,115 +1268,47 @@ def show_user_chatbot():
             }
         )
 
+        # ====================================================
+        # DISPLAY USER MESSAGE
+        # ====================================================
+
         with st.chat_message("user"):
 
             st.markdown(prompt)
 
-        # ----------------------------------------------------
-        # BUILD FULL CONVERSATION CONTEXT
-        # ----------------------------------------------------
-
-        gemini_context = build_gemini_context(
-            st.session_state.messages[:-1],
-            prompt
-        )
-
-        # ----------------------------------------------------
+        # ====================================================
         # GET GEMINI RESPONSE
-        # ----------------------------------------------------
+        # ====================================================
 
-     with st.chat_message("assistant"):
+        with st.chat_message("assistant"):
 
-    with st.spinner("Thinking... 🤔"):
+            with st.spinner(
+                "Thinking... 🤔"
+            ):
 
-        bot_response = None
+                bot_response = get_gemini_response(
+                    prompt,
+                    previous_messages
+                )
 
-        # Try Gemini 3.5 Flash
-        try:
-
-            response = client.models.generate_content(
-                model="gemini-3.5-flash",
-                contents=gemini_context
+            st.markdown(
+                bot_response
             )
 
-            bot_response = response.text
+        # ====================================================
+        # SAVE ASSISTANT MESSAGE IN SESSION
+        # ====================================================
 
-        except Exception as first_error:
-
-            first_error_text = str(first_error)
-
-            # Retry once if Gemini is temporarily busy
-            if "503" in first_error_text:
-
-                try:
-
-                    response = client.models.generate_content(
-                        model="gemini-3.5-flash",
-                        contents=gemini_context
-                    )
-
-                    bot_response = response.text
-
-                except Exception:
-                    bot_response = None
-
-            # Try fallback model
-            if bot_response is None:
-
-                try:
-
-                    response = client.models.generate_content(
-                        model="gemini-3.1-flash-lite",
-                        contents=gemini_context
-                    )
-
-                    bot_response = response.text
-
-                except Exception as fallback_error:
-
-                    fallback_error_text = str(
-                        fallback_error
-                    )
-
-                    if (
-                        "401" in fallback_error_text
-                        or
-                        "authentication"
-                        in fallback_error_text.lower()
-                    ):
-
-                        bot_response = (
-                            "❌ Gemini authentication failed. "
-                            "Please check the API key in "
-                            "Streamlit Secrets."
-                        )
-
-                    elif "429" in fallback_error_text:
-
-                        bot_response = (
-                            "⚠️ Gemini API rate limit reached. "
-                            "Please try again later."
-                        )
-
-                    elif "503" in fallback_error_text:
-
-                        bot_response = (
-                            "⚠️ Gemini is temporarily busy. "
-                            "Please try again in a few seconds."
-                        )
-
-                    else:
-
-                        bot_response = (
-                            "❌ Something went wrong:\n\n"
-                            + fallback_error_text
-                        )
-
-        st.markdown(bot_response)            {
+        st.session_state.messages.append(
+            {
                 "role": "assistant",
                 "content": bot_response
             }
         )
+
+        # ====================================================
+        # SAVE CHAT TO DATABASE
+        # ====================================================
 
         save_chat_message(
             st.session_state.user_id,
@@ -1113,9 +1317,9 @@ def show_user_chatbot():
             bot_response
         )
 
-        # ----------------------------------------------------
+        # ====================================================
         # UPDATE TITLE
-        # ----------------------------------------------------
+        # ====================================================
 
         if is_first_message:
 
@@ -1152,7 +1356,7 @@ else:
     )
 
     # ========================================================
-    # USER LOGIN PAGE
+    # USER LOGIN
     # ========================================================
 
     if page == "🔐 User Login":
@@ -1181,7 +1385,11 @@ else:
 
             else:
 
-                success, user_id, message = user_login(
+                (
+                    success,
+                    user_id,
+                    message
+                ) = user_login(
                     username,
                     password
                 )
@@ -1203,7 +1411,7 @@ else:
                     st.error(message)
 
     # ========================================================
-    # REGISTRATION PAGE
+    # REGISTRATION
     # ========================================================
 
     elif page == "📝 Register":
@@ -1233,7 +1441,11 @@ else:
             use_container_width=True
         ):
 
-            if not username or not email or not password:
+            if (
+                not username
+                or not email
+                or not password
+            ):
 
                 st.warning(
                     "Please fill in all fields."
@@ -1261,7 +1473,9 @@ else:
 
                 if success:
 
-                    st.success(message)
+                    st.success(
+                        message
+                    )
 
                     st.info(
                         "You can now go to User Login."
@@ -1269,10 +1483,12 @@ else:
 
                 else:
 
-                    st.error(message)
+                    st.error(
+                        message
+                    )
 
     # ========================================================
-    # ADMIN LOGIN PAGE
+    # ADMIN LOGIN
     # ========================================================
 
     elif page == "🔑 Admin Login":
@@ -1311,10 +1527,14 @@ else:
                     st.session_state.admin_logged_in = True
                     st.session_state.admin_username = username
 
-                    st.success(message)
+                    st.success(
+                        message
+                    )
 
                     st.rerun()
 
                 else:
 
-                    st.error(message)
+                    st.error(
+                        message
+                    )
