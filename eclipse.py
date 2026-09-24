@@ -49,6 +49,15 @@ if "admin_logged_in" not in st.session_state:
 if "admin_username" not in st.session_state:
     st.session_state.admin_username = None
 
+if "user_logged_in" not in st.session_state:
+    st.session_state.user_logged_in = False
+
+if "user_id" not in st.session_state:
+    st.session_state.user_id = None
+
+if "username" not in st.session_state:
+    st.session_state.username = None
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
@@ -97,6 +106,119 @@ def admin_login(username, password):
 
 
 # =========================================================
+# USER REGISTRATION
+# =========================================================
+
+def register_user(username, email, password):
+
+    db = get_db_connection()
+    cursor = db.cursor(dictionary=True)
+
+    # Check username
+    cursor.execute(
+        "SELECT id FROM users WHERE username = %s",
+        (username,)
+    )
+
+    if cursor.fetchone():
+        cursor.close()
+        db.close()
+        return False, "Username already exists."
+
+    # Check email
+    cursor.execute(
+        "SELECT id FROM users WHERE email = %s",
+        (email,)
+    )
+
+    if cursor.fetchone():
+        cursor.close()
+        db.close()
+        return False, "Email already registered."
+
+    # Hash password
+    password_hash = bcrypt.hashpw(
+        password.encode("utf-8"),
+        bcrypt.gensalt()
+    ).decode("utf-8")
+
+    # Insert user
+    cursor.execute(
+        """
+        INSERT INTO users
+        (username, email, password_hash, role, status)
+        VALUES
+        (%s, %s, %s, 'user', 'active')
+        """,
+        (username, email, password_hash)
+    )
+
+    db.commit()
+
+    cursor.close()
+    db.close()
+
+    return True, "Registration successful."
+
+
+# =========================================================
+# USER LOGIN
+# =========================================================
+
+def user_login(username, password):
+
+    db = get_db_connection()
+    cursor = db.cursor(dictionary=True)
+
+    cursor.execute(
+        """
+        SELECT id, username, password_hash, role, status
+        FROM users
+        WHERE username = %s
+        """,
+        (username,)
+    )
+
+    user = cursor.fetchone()
+
+    cursor.close()
+    db.close()
+
+    if not user:
+        return False, None, "Username not found."
+
+    if user["role"] != "user":
+        return False, None, "Please use the Admin Login."
+
+    if user["status"] != "active":
+        return False, None, "Your account has been disabled by the administrator."
+
+    password_correct = bcrypt.checkpw(
+        password.encode("utf-8"),
+        user["password_hash"].encode("utf-8")
+    )
+
+    if not password_correct:
+        return False, None, "Incorrect password."
+
+    return True, user["id"], "Login successful."
+
+
+# =========================================================
+# USER LOGOUT
+# =========================================================
+
+def user_logout():
+
+    st.session_state.user_logged_in = False
+    st.session_state.user_id = None
+    st.session_state.username = None
+    st.session_state.messages = []
+
+    st.rerun()
+
+
+# =========================================================
 # ADMIN DASHBOARD
 # =========================================================
 
@@ -110,11 +232,7 @@ def show_admin_dashboard():
 
     st.divider()
 
-    # -----------------------------------------------------
-    # LOGOUT
-    # -----------------------------------------------------
-
-    if st.button("🚪 Logout"):
+    if st.button("🚪 Admin Logout"):
 
         st.session_state.admin_logged_in = False
         st.session_state.admin_username = None
@@ -124,7 +242,7 @@ def show_admin_dashboard():
     st.divider()
 
     # -----------------------------------------------------
-    # GET USER STATISTICS
+    # STATISTICS
     # -----------------------------------------------------
 
     db = get_db_connection()
@@ -150,10 +268,6 @@ def show_admin_dashboard():
 
     cursor.close()
     db.close()
-
-    # -----------------------------------------------------
-    # STATISTICS
-    # -----------------------------------------------------
 
     col1, col2, col3, col4 = st.columns(4)
 
@@ -202,6 +316,7 @@ def show_admin_dashboard():
         )
 
     else:
+
         st.info("No users found.")
 
     st.divider()
@@ -244,6 +359,7 @@ def show_admin_dashboard():
             )
 
         else:
+
             st.warning("No matching user found.")
 
     st.divider()
@@ -303,6 +419,7 @@ def show_admin_dashboard():
                 )
 
         else:
+
             st.warning("Please enter a username.")
 
     st.divider()
@@ -325,7 +442,6 @@ def show_admin_dashboard():
             db = get_db_connection()
             cursor = db.cursor()
 
-            # Delete user's chat history first
             cursor.execute(
                 """
                 DELETE FROM chat_history
@@ -339,7 +455,6 @@ def show_admin_dashboard():
                 (delete_username,)
             )
 
-            # Delete user
             cursor.execute(
                 """
                 DELETE FROM users
@@ -371,6 +486,7 @@ def show_admin_dashboard():
                 )
 
         else:
+
             st.warning("Please enter a username.")
 
     st.divider()
@@ -434,28 +550,35 @@ def show_admin_dashboard():
 
 
 # =========================================================
-# NORMAL CHATBOT
+# USER CHATBOT
 # =========================================================
 
-def show_chatbot():
+def show_user_chatbot():
 
     st.title("🤖 Eclipse AI")
 
     st.write(
-        "Your AI assistant — ask me anything!"
+        f"Welcome, **{st.session_state.username}**! 👋"
     )
 
+    if st.button("🚪 Logout"):
+
+        user_logout()
+
+    st.divider()
+
     # -----------------------------------------------------
-    # DISPLAY PREVIOUS MESSAGES
+    # DISPLAY CHAT
     # -----------------------------------------------------
 
     for message in st.session_state.messages:
 
         with st.chat_message(message["role"]):
+
             st.markdown(message["content"])
 
     # -----------------------------------------------------
-    # USER INPUT
+    # CHAT INPUT
     # -----------------------------------------------------
 
     prompt = st.chat_input(
@@ -472,6 +595,7 @@ def show_chatbot():
         )
 
         with st.chat_message("user"):
+
             st.markdown(prompt)
 
         try:
@@ -512,6 +636,7 @@ def show_chatbot():
 
                 answer = f"❌ Error: {error_text}"
 
+        # Save response in session
         st.session_state.messages.append(
             {
                 "role": "assistant",
@@ -519,8 +644,181 @@ def show_chatbot():
             }
         )
 
+        # Save chat to database
+        try:
+
+            db = get_db_connection()
+            cursor = db.cursor()
+
+            cursor.execute(
+                """
+                INSERT INTO chat_history
+                (user_id, user_message, bot_response)
+                VALUES
+                (%s, %s, %s)
+                """,
+                (
+                    st.session_state.user_id,
+                    prompt,
+                    answer
+                )
+            )
+
+            db.commit()
+
+            cursor.close()
+            db.close()
+
+        except Exception as e:
+
+            st.warning(
+                "⚠️ Chat response was generated, but it could not be saved to the database."
+            )
+
         with st.chat_message("assistant"):
+
             st.markdown(answer)
+
+
+# =========================================================
+# USER REGISTRATION PAGE
+# =========================================================
+
+def show_registration():
+
+    st.title("📝 Create an Eclipse AI Account")
+
+    username = st.text_input(
+        "Username"
+    )
+
+    email = st.text_input(
+        "Email"
+    )
+
+    password = st.text_input(
+        "Password",
+        type="password"
+    )
+
+    confirm_password = st.text_input(
+        "Confirm Password",
+        type="password"
+    )
+
+    if st.button("Create Account"):
+
+        if not username or not email or not password:
+
+            st.warning(
+                "Please fill in all fields."
+            )
+
+        elif password != confirm_password:
+
+            st.error(
+                "Passwords do not match."
+            )
+
+        elif len(password) < 6:
+
+            st.warning(
+                "Password must contain at least 6 characters."
+            )
+
+        else:
+
+            try:
+
+                success, message = register_user(
+                    username,
+                    email,
+                    password
+                )
+
+                if success:
+
+                    st.success(message)
+
+                    st.info(
+                        "You can now go to User Login and sign in."
+                    )
+
+                else:
+
+                    st.error(message)
+
+            except Exception as e:
+
+                st.error(
+                    "Registration error:"
+                )
+
+                st.code(
+                    str(e)
+                )
+
+
+# =========================================================
+# USER LOGIN PAGE
+# =========================================================
+
+def show_user_login():
+
+    st.title("🔐 User Login")
+
+    username = st.text_input(
+        "Username",
+        key="user_login_username"
+    )
+
+    password = st.text_input(
+        "Password",
+        type="password",
+        key="user_login_password"
+    )
+
+    if st.button("Login"):
+
+        if not username or not password:
+
+            st.warning(
+                "Please enter username and password."
+            )
+
+        else:
+
+            try:
+
+                success, user_id, message = user_login(
+                    username,
+                    password
+                )
+
+                if success:
+
+                    st.session_state.user_logged_in = True
+                    st.session_state.user_id = user_id
+                    st.session_state.username = username
+                    st.session_state.messages = []
+
+                    st.success(message)
+
+                    st.rerun()
+
+                else:
+
+                    st.error(message)
+
+            except Exception as e:
+
+                st.error(
+                    "Login error:"
+                )
+
+                st.code(
+                    str(e)
+                )
 
 
 # =========================================================
@@ -531,49 +829,45 @@ if st.session_state.admin_logged_in:
 
     show_admin_dashboard()
 
+elif st.session_state.user_logged_in:
+
+    show_user_chatbot()
+
 else:
 
-    # Sidebar navigation
     st.sidebar.title("🤖 Eclipse AI")
 
     page = st.sidebar.radio(
         "Navigation",
         [
-            "💬 AI Chat",
-            "🔐 Admin Login"
+            "🔐 User Login",
+            "📝 Register",
+            "🔑 Admin Login"
         ]
     )
 
-    # -----------------------------------------------------
-    # AI CHAT
-    # -----------------------------------------------------
+    if page == "🔐 User Login":
 
-    if page == "💬 AI Chat":
+        show_user_login()
 
-        show_chatbot()
+    elif page == "📝 Register":
 
-    # -----------------------------------------------------
-    # ADMIN LOGIN
-    # -----------------------------------------------------
+        show_registration()
 
-    elif page == "🔐 Admin Login":
+    elif page == "🔑 Admin Login":
 
-        st.title("🔐 Admin Login")
-
-        st.write(
-            "Login using your administrator account."
-        )
+        st.title("🔑 Admin Login")
 
         username = st.text_input(
-            "Username"
+            "Admin Username"
         )
 
         password = st.text_input(
-            "Password",
+            "Admin Password",
             type="password"
         )
 
-        if st.button("Login"):
+        if st.button("Admin Login"):
 
             if username and password:
 
@@ -600,7 +894,7 @@ else:
                 except Exception as e:
 
                     st.error(
-                        "Login error:"
+                        "Admin login error:"
                     )
 
                     st.code(
@@ -610,5 +904,5 @@ else:
             else:
 
                 st.warning(
-                    "Please enter username and password."
+                    "Please enter admin username and password."
                 )
