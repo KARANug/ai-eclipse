@@ -38,14 +38,19 @@ if prompt:
 
     try:
         response = client.models.generate_content(
-            model="gemini-flash-latest",
+            model="gemini-3.5-flash"
             contents=prompt,
         )
 
         answer = response.text
 
     except Exception as e:
-        answer = f"❌ Error:\n\n{str(e)}"
+    error_text = str(e)
+
+    if "503" in error_text or "UNAVAILABLE" in error_text:
+        answer = "⚠️ Gemini is temporarily busy. Please try again in a few seconds."
+    else:
+        answer = f"❌ Error: {error_text}"
 
     st.session_state.messages.append(
         {
