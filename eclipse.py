@@ -711,6 +711,63 @@ def get_api_keys():
     return api_keys
 
 
+# ============================================================
+# GET ACTIVE API KEYS
+# ============================================================
+
+def get_active_api_keys():
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            key_name,
+            api_key
+        FROM api_keys
+        WHERE status = 'active'
+        ORDER BY
+            last_used_at IS NULL DESC,
+            last_used_at ASC,
+            id ASC
+        """
+    )
+
+    api_keys = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    return api_keys
+
+
+# ============================================================
+# UPDATE API KEY LAST USED
+# ============================================================
+
+def update_api_key_last_used(api_key_id):
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE api_keys
+        SET last_used_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+        """,
+        (api_key_id,)
+    )
+
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+
+
 def add_api_key(key_name, api_key):
     conn = get_db_connection()
     cursor = conn.cursor()
