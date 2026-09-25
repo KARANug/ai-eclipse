@@ -682,6 +682,121 @@ def get_gemini_response(prompt, messages):
 
 
 # ============================================================
+# API KEY MANAGEMENT
+# ============================================================
+
+def get_api_keys():
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    cursor.execute(
+        """
+        SELECT
+            id,
+            key_name,
+            api_key,
+            status,
+            created_at,
+            last_used_at
+        FROM api_keys
+        ORDER BY id DESC
+        """
+    )
+
+    api_keys = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    return api_keys
+
+
+def add_api_key(key_name, api_key):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        INSERT INTO api_keys
+        (
+            key_name,
+            api_key,
+            status
+        )
+        VALUES
+        (
+            %s,
+            %s,
+            'active'
+        )
+        """,
+        (
+            key_name,
+            api_key
+        )
+    )
+
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+
+def toggle_api_key_status(api_key_id, new_status):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        UPDATE api_keys
+        SET status = %s
+        WHERE id = %s
+        """,
+        (
+            new_status,
+            api_key_id
+        )
+    )
+
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+
+def delete_api_key(api_key_id):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        DELETE FROM api_keys
+        WHERE id = %s
+        """,
+        (api_key_id,)
+    )
+
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+
+def mask_api_key(api_key):
+    if not api_key:
+        return "••••••••"
+
+    if len(api_key) <= 8:
+        return "••••••••"
+
+    return (
+        api_key[:4]
+        + "••••••••••••"
+        + api_key[-4:]
+    )
+
+
+# ============================================================
 # ADMIN DASHBOARD
 # ============================================================
 
@@ -776,6 +891,180 @@ def show_admin_dashboard():
     )
 
     st.divider()
+
+    # ========================================================
+    # API KEY MANAGEMENT
+    # ========================================================
+
+    st.subheader("🔑 API Key Management")
+
+    st.caption(
+        "Store and manage backup Gemini API keys. "
+        "The actual keys are hidden from the admin interface."
+    )
+
+    # --------------------------------------------------------
+    # ADD NEW API KEY
+    # --------------------------------------------------------
+
+    with st.form("add_api_key_form", clear_on_submit=True):
+
+        st.markdown("### ➕ Add New API Key")
+
+        new_key_name = st.text_input(
+            "Key Name",
+            placeholder="Example: Demo Key 1"
+        )
+
+        new_api_key = st.text_input(
+            "Gemini API Key",
+            type="password",
+            placeholder="Paste the API key here"
+        )
+
+        add_key_submitted = st.form_submit_button(
+            "➕ Add API Key",
+            use_container_width=True
+        )
+
+        if add_key_submitted:
+
+            if not new_key_name.strip():
+                st.warning("Please enter a key name.")
+
+            elif not new_api_key.strip():
+                st.warning("Please enter the Gemini API key.")
+
+            else:
+                add_api_key(
+                    new_key_name.strip(),
+                    new_api_key.strip()
+                )
+
+                st.success(
+                    f"API key '{new_key_name.strip()}' added successfully."
+                )
+
+                st.rerun()
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # DISPLAY SAVED API KEYS
+    # --------------------------------------------------------
+
+    api_keys = get_api_keys()
+
+    if api_keys:
+
+        st.markdown("### 📋 Saved API Keys")
+
+        for api_key in api_keys:
+
+            col1, col2, col3, col4 = st.columns(
+                [2, 3, 1.5, 1.5]
+            )
+
+            with col1:
+                st.write(
+                    f"**{api_key['key_name']}**"
+                )
+
+            with col2:
+                st.code(
+                    mask_api_key(api_key["api_key"]),
+                    language=None
+                )
+
+            with col3:
+
+                if api_key["status"] == "active":
+
+                    st.success("🟢 Active")
+
+                else:
+
+                    st.error("🔴 Disabled")
+
+            with col4:
+
+                if api_key["status"] == "active":
+
+                    if st.button(
+                        "Disable",
+                        key=f"disable_api_key_{api_key['id']}",
+                        use_container_width=True
+                    ):
+
+                        toggle_api_key_status(
+                            api_key["id"],
+                            "disabled"
+                        )
+
+                        st.rerun()
+
+                else:
+
+                    if st.button(
+                        "Enable",
+                        key=f"enable_api_key_{api_key['id']}",
+                        use_container_width=True
+                    ):
+
+                        toggle_api_key_status(
+                            api_key["id"],
+                            "active"
+                        )
+
+                        st.rerun()
+
+            info_col1, info_col2, info_col3 = st.columns(3)
+
+            with info_col1:
+                st.caption(
+                    f"🆔 ID: {api_key['id']}"
+                )
+
+            with info_col2:
+                st.caption(
+                    f"📅 Created: {api_key['created_at']}"
+                )
+
+            with info_col3:
+
+                if api_key["last_used_at"]:
+                    st.caption(
+                        f"🕒 Last used: {api_key['last_used_at']}"
+                    )
+                else:
+                    st.caption("🕒 Last used: Never")
+
+            delete_col1, delete_col2 = st.columns([6, 1])
+
+            with delete_col2:
+
+                if st.button(
+                    "🗑️ Delete",
+                    key=f"delete_api_key_{api_key['id']}",
+                    use_container_width=True
+                ):
+
+                    delete_api_key(api_key["id"])
+
+                    st.success(
+                        f"API key '{api_key['key_name']}' deleted."
+                    )
+
+                    st.rerun()
+
+            st.divider()
+
+    else:
+
+        st.info(
+            "No API keys have been added yet. "
+            "Add a Gemini API key above."
+        )
 
     # ========================================================
     # USER MANAGEMENT
