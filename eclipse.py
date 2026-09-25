@@ -542,11 +542,12 @@ def build_gemini_context(messages, new_prompt):
     )
 
     return conversation_text
-
-
 # ============================================================
 # GEMINI RESPONSE
 # ============================================================
+
+import time
+
 
 def get_gemini_response(prompt, messages):
 
@@ -556,42 +557,31 @@ def get_gemini_response(prompt, messages):
     )
 
     # ========================================================
-    # GET ACTIVE API KEYS FROM DATABASE
+    # GET ACTIVE API KEYS
     # ========================================================
 
     api_keys = get_active_api_keys()
 
     # ========================================================
-    # IF DATABASE HAS NO ACTIVE KEYS
-    # USE STREAMLIT SECRET KEY
+    # IF NO DATABASE KEYS EXIST
+    # USE STREAMLIT SECRET
     # ========================================================
 
     if not api_keys:
 
-        try:
-
-            fallback_client = genai.Client(
-                api_key=st.secrets["GEMINI_API_KEY"]
-            )
-
-            response = fallback_client.models.generate_content(
-                model="gemini-3.5-flash",
-                contents=context
-            )
-
-            if response.text:
-                return response.text
-
-        except Exception as error:
-
-            return (
-                "❌ Gemini could not generate a response.\n\n"
-                + str(error)
-            )
+        api_keys = [
+            {
+                "id": None,
+                "key_name": "Streamlit Secret",
+                "api_key": st.secrets["GEMINI_API_KEY"]
+            }
+        ]
 
     # ========================================================
-    # TRY DATABASE API KEYS
+    # TRY EACH API KEY
     # ========================================================
+
+    last_error = None
 
     for api_key_data in api_keys:
 
@@ -599,96 +589,179 @@ def get_gemini_response(prompt, messages):
         api_key_name = api_key_data["key_name"]
         api_key = api_key_data["api_key"]
 
+        # ----------------------------------------------------
+        # CREATE CLIENT FOR CURRENT KEY
+        # ----------------------------------------------------
+
         try:
 
             current_client = genai.Client(
                 api_key=api_key
             )
 
-            response = current_client.models.generate_content(
-                model="gemini-3.5-flash",
-                contents=context
-            )
+        except Exception as client_error:
 
-            if response.text:
-
-                # --------------------------------------------
-                # UPDATE LAST USED TIME
-                # --------------------------------------------
-
-                update_api_key_last_used(
-                    api_key_id
-                )
-
-                return response.text
-
-        except Exception as error:
-
-            error_text = str(error)
-
-            # ----------------------------------------------
-            # KEY FAILED
-            # TRY NEXT KEY
-            # ----------------------------------------------
+            last_error = str(client_error)
 
             continue
 
+        # ====================================================
+        # RETRY CURRENT KEY
+        # ====================================================
+
+        max_retries = 3
+
+        for attempt in range(max_retries):
+
+            try:
+
+                response = current_client.models.generate_content(
+                    model="gemini-3.5-flash",
+                    contents=context
+                )
+
+                # ------------------------------------------------
+                # SUCCESS
+                # ------------------------------------------------
+
+                if response.text:
+
+                    if api_key_id is not None:
+
+                        update_api_key_last_used(
+                            api_key_id
+                        )
+
+                    return response.text
+
+                last_error = (
+                    "Gemini returned an empty response."
+                )
+
+                break
+
+            except Exception as error:
+
+                error_text = str(error)
+
+                last_error = error_text
+
+                # ================================================
+                # 503 - TEMPORARY SERVER / HIGH DEMAND
+                # ================================================
+
+                if "503" in error_text:
+
+                    if attempt < max_retries - 1:
+
+                        delay = 2 ** attempt
+
+                        time.sleep(delay)
+
+                        continue
+
+                    # --------------------------------------------
+                    # Current key exhausted
+                    # Move to next API key
+                    # --------------------------------------------
+
+                    break
+
+                # ================================================
+                # 429 - RATE LIMIT / QUOTA
+                # ================================================
+
+                if "429" in error_text:
+
+                    # Move to next API key
+                    break
+
+                # ================================================
+                # 401 / 403 - AUTHENTICATION
+                # ================================================
+
+                if (
+                    "401" in error_text
+                    or
+                    "403" in error_text
+                    or
+                    "authentication" in error_text.lower()
+                    or
+                    "api key" in error_text.lower()
+                ):
+
+                    # Current key is probably invalid
+                    # Move to next key
+                    break
+
+                # ================================================
+                # 404 - MODEL NOT FOUND
+                # ================================================
+
+                if "404" in error_text:
+
+                    return (
+                        "❌ Gemini model error.\n\n"
+                        "The selected Gemini model "
+                        "could not be found or is unavailable."
+                    )
+
+                # ================================================
+                # OTHER ERROR
+                # ================================================
+
+                break
+
     # ========================================================
     # ALL DATABASE KEYS FAILED
-    # TRY STREAMLIT SECRET AS FINAL FALLBACK
     # ========================================================
 
-    try:
+    if last_error:
 
-        fallback_client = genai.Client(
-            api_key=st.secrets["GEMINI_API_KEY"]
-        )
+        if "503" in last_error:
 
-        response = fallback_client.models.generate_content(
-            model="gemini-3.5-flash",
-            contents=context
-        )
+            return (
+                "⚠️ Gemini is currently experiencing "
+                "high demand.\n\n"
+                "I tried the available API keys and "
+                "automatic retries, but Gemini is still "
+                "temporarily unavailable.\n\n"
+                "Please try again in a few seconds."
+            )
 
-        if response.text:
-            return response.text
+        if "429" in last_error:
 
-    except Exception as error:
+            return (
+                "⚠️ Gemini API rate limit reached.\n\n"
+                "The available API keys have reached "
+                "their current quota or rate limit.\n\n"
+                "Please try again later."
+            )
 
-        error_text = str(error)
-
-        if "401" in error_text:
+        if (
+            "401" in last_error
+            or
+            "403" in last_error
+            or
+            "authentication" in last_error.lower()
+        ):
 
             return (
                 "❌ Gemini authentication failed.\n\n"
-                "Please check your API keys."
-            )
-
-        if "429" in error_text:
-
-            return (
-                "⚠️ All Gemini API keys have "
-                "reached their rate limit."
-            )
-
-        if "503" in error_text:
-
-            return (
-                "⚠️ Gemini is temporarily busy right now.\n\n"
-                "Please try again in a few seconds."
+                "Please check the API keys in the "
+                "Admin Dashboard."
             )
 
         return (
             "❌ Something went wrong while "
             "connecting to Gemini.\n\n"
-            + error_text
+            + last_error
         )
 
     return (
         "⚠️ Gemini did not return a response.\n\n"
         "Please try again."
     )
-
-
 # ============================================================
 # API KEY MANAGEMENT
 # ============================================================
